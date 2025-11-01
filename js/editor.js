@@ -1,0 +1,1233 @@
+const margin = { top: 40, right: 120, bottom: 40, left: 120 };
+let containerWidth = 2000;
+let containerHeight = 2000;
+const svg = d3.select("#tree-chart")
+    .append("svg")
+    .attr("width", containerWidth)
+    .attr("height", containerHeight)
+    .append("g")
+    .attr("transform", `translate(${containerWidth / 2}, ${margin.top})`);
+
+function updateContainerSize() {
+    if (!root) return;
+    
+    // Find the bounds of all nodes
+    let minX = Infinity, maxX = -Infinity;
+    let minY = Infinity, maxY = -Infinity;
+    
+    root.descendants().forEach(d => {
+        minX = Math.min(minX, d.x);
+        maxX = Math.max(maxX, d.x);
+        minY = Math.min(minY, d.y);
+        maxY = Math.max(maxY, d.y);
+    });
+    
+    // Calculate required dimensions with padding
+    const horizontalPadding = 400; // Extra space on left and right
+    const verticalPadding = 200; // Extra space on top and bottom
+    
+    const requiredWidth = Math.max(4000, (maxX - minX) + horizontalPadding);
+    const requiredHeight = Math.max(2000, (maxY - minY) + verticalPadding + margin.top + margin.bottom);
+    
+    // Update container size
+    containerWidth = requiredWidth;
+    containerHeight = requiredHeight;
+    
+    // Calculate center offset to center the graph in the viewport
+    const graphCenterX = (minX + maxX) / 2;
+    const viewportCenterOffset = containerWidth / 2;
+    const translateX = viewportCenterOffset - graphCenterX;
+    
+    // Update SVG dimensions
+    svg.attr("transform", `translate(${translateX}, ${margin.top})`);
+    
+    // Update SVG element
+    d3.select("#tree-chart svg")
+        .attr("width", containerWidth)
+        .attr("height", containerHeight);
+    
+    // Don't auto-center during updates (only on initial load)
+}
+
+function centerGraphInViewport() {
+    const container = document.getElementById('graph-container');
+    if (!container || !root) return;
+    
+    // Calculate graph bounds
+    let minX = Infinity, maxX = -Infinity;
+    root.descendants().forEach(d => {
+        minX = Math.min(minX, d.x);
+        maxX = Math.max(maxX, d.x);
+    });
+    
+    const graphCenterX = (minX + maxX) / 2;
+    const svgTransform = svg.attr("transform");
+    const translateMatch = svgTransform.match(/translate\(([^,]+)/);
+    const currentTranslateX = translateMatch ? parseFloat(translateMatch[1]) : containerWidth / 2;
+    
+    // Calculate where the graph center is in absolute coordinates
+    const graphAbsoluteX = currentTranslateX + graphCenterX;
+    
+    // Calculate scroll position to center the graph in the viewport
+    const containerCenter = container.clientWidth / 2;
+    const scrollPosition = graphAbsoluteX - containerCenter;
+    
+    // Scroll to center
+    container.scrollLeft = Math.max(0, scrollPosition);
+    container.scrollTop = 0;
+}
+
+const nodes = new Map();
+const linkControls = new Map();
+let treeData;
+let root;
+let links;
+const tree = d3.tree().nodeSize([180, 150]);
+let selectedNodeForAdding = null;
+let selectedNodeForEditing = null;
+let selectedTableNodeForEditing = null;
+let nodeIdCounter = 100; // Start from 100 to avoid conflicts
+
+
+function getLinkKey(link) {
+    return `${link.source.data.nodeid}-${link.target.data.nodeid}`;
+}
+
+function initializeTree(data) {
+    treeData = data;
+    root = d3.hierarchy(treeData);
+    tree(root);
+    
+    // Calculate initial positions if not already set in data
+    root.descendants().forEach(d => {
+        // Use saved x/y if available, otherwise calculate initial position
+        if (d.data.x === undefined && d.data.y === undefined) {
+            if (d.depth === 0) {
+                // Root node - center horizontally at 0 (will be centered by transform)
+                d.x = 0;
+                d.y = margin.top;
+            } else if (d.parent) {
+            const siblings = d.parent.children || [];
+            const siblingIndex = siblings.indexOf(d);
+
+            // Define sibling spacing
+            const siblingSpacing = 300;
+                const verticalSpacing = 150;
+            const totalWidth = (siblings.length - 1) * siblingSpacing;
+
+                // Ensure parent has a position
+                if (d.parent.x === undefined || d.parent.y === undefined) {
+                    if (d.parent.depth === 0) {
+                        d.parent.x = containerWidth / 16;
+                        d.parent.y = margin.top;
+                    } else if (d.parent.parent) {
+                        const parentSiblings = d.parent.parent.children || [];
+                        const parentSiblingIndex = parentSiblings.indexOf(d.parent);
+                        const parentTotalWidth = (parentSiblings.length - 1) * siblingSpacing;
+                        const parentLeftStart = d.parent.parent.x - parentTotalWidth / 2;
+                        d.parent.x = parentLeftStart + parentSiblingIndex * siblingSpacing;
+                        d.parent.y = d.parent.parent.y + verticalSpacing;
+                    }
+                }
+
+            // Calculate leftmost position under parent
+            const leftStart = d.parent.x - totalWidth / 2;
+
+            // Assign evenly spaced x positions for siblings
+            d.x = leftStart + siblingIndex * siblingSpacing;
+                // Set y position based on depth
+                d.y = d.parent.y + verticalSpacing;
+            }
+        } else {
+            // Use saved positions from data
+            d.x = d.data.x;
+            d.y = d.data.y;
+        }
+    });
+    
+    renderLinks(root);
+    renderNodes(root);
+    svg.selectAll(".link").lower();
+    drawControlPoints();
+    
+    // Update container size based on node positions
+    updateContainerSize();
+    
+    setTimeout(() => centerGraphInViewport(), 100);
+}
+
+function renderNodes(root) {
+    maxNodeHeight = 60;
+    const nodeSelection = svg.selectAll(".node")
+        .data(root.descendants(), d => d.data.nodeid);
+    
+    nodeSelection.exit().remove();
+    
+    const nodes = nodeSelection.enter()
+        .append("g")
+        .attr("class", "node")
+        .attr("transform", d => `translate(${d.x},${d.y})`)
+        .merge(nodeSelection)
+        .attr("transform", d => `translate(${d.x},${d.y})`)
+        .call(
+            d3.drag()
+                .on("drag", function (event, d) {
+                    d.x = event.x;
+                    d.y = event.y;
+                    d3.select(this).attr("transform", `translate(${d.x},${d.y})`);
+                    updateLinks();
+                    svg.selectAll(".link").lower();
+                })
+                .on("end", function () {
+                    adjustLines();
+                    svg.selectAll(".link").lower();
+                    updateContainerSize();
+                })
+        );
+
+    nodes.filter(d => d.data.type === "rectangle")
+        .selectAll("rect, text, line, circle.add-node-btn, text.add-node-btn, circle.edit-node-btn, text.edit-node-btn").remove();
+
+    nodes.filter(d => d.data.type === "rectangle")
+        .each(function (d) {
+            const nameParts = d.data.name.split("\n");
+            const tempText = svg.append("text")
+                .style("font-size", "12px")
+                .style("visibility", "hidden")
+                .text(nameParts.join(" "));
+
+            // Measure text width and height
+            const textWidth = tempText.node().getBBox().width;
+            const textHeight = tempText.node().getBBox().height * nameParts.length;
+
+            tempText.remove();
+
+            const padding = 20;
+            const minWidth = 150;
+            const rectWidth = Math.max(textWidth + padding, minWidth);
+
+            const rectHeight = maxNodeHeight; 
+            d3.select(this)
+                .append("rect")
+                .attr("width", rectWidth)
+                .attr("height", rectHeight)
+                .attr("x", -rectWidth / 2)
+                .attr("y", -rectHeight / 2)
+                .style("fill", "#fff")
+                .style("stroke", "black")
+                .style("stroke-width", 2);
+
+            nameParts.forEach((line, index) => {
+                d3.select(this)
+                    .append("text")
+                    .attr("dx", 0)
+                    .attr("dy", -rectHeight / 2 + 15 + index * 15)
+                    .attr("text-anchor", "middle")
+                    .text(line)
+                    .style("font-size", "12px")
+                    .style("fill", "#333");
+            });
+
+            d3.select(this)
+                .append("line")
+                .attr("x1", -rectWidth / 2)
+                .attr("y1", -rectHeight / 2 + textHeight + 10)
+                .attr("x2", rectWidth / 2)
+                .attr("y2", -rectHeight / 2 + textHeight + 10)
+                .style("stroke", "black")
+                .style("stroke-width", 1);
+
+            d3.select(this)
+                .append("text")
+                .attr("dx", 0)
+                .attr("dy", -rectHeight / 2 + textHeight + 25)
+                .attr("text-anchor", "middle")
+                .text(`(${d.data.class})`)
+                .style("font-size", "12px")
+                .style("fill", "#333");
+
+            // Add "+" button to add children
+            d3.select(this)
+                .append("circle")
+                .attr("class", "add-node-btn")
+                .attr("cx", rectWidth / 2 - 10)
+                .attr("cy", -rectHeight / 2 + 10)
+                .attr("r", 10)
+                .style("fill", "#4CAF50")
+                .style("cursor", "pointer")
+                .on("click", function(event) {
+                    event.stopPropagation();
+                    openAddNodeModal(d);
+                })
+                .append("title")
+                .text("Add child node");
+            
+            d3.select(this)
+                .append("text")
+                .attr("class", "add-node-btn")
+                .attr("x", rectWidth / 2 - 10)
+                .attr("y", -rectHeight / 2 + 13)
+                .attr("text-anchor", "middle")
+                .text("+")
+                .style("font-size", "14px")
+                .style("fill", "white")
+                .style("font-weight", "bold")
+                .style("cursor", "pointer")
+                .style("pointer-events", "none");
+
+            // Add edit button for rectangle nodes
+            d3.select(this)
+                .append("circle")
+                .attr("class", "edit-node-btn")
+                .attr("cx", -rectWidth / 2 + 10)
+                .attr("cy", -rectHeight / 2 + 10)
+                .attr("r", 10)
+                .style("fill", "#2196F3")
+                .style("cursor", "pointer")
+                .style("opacity", 0.7)
+                .on("click", function(event) {
+                    event.stopPropagation();
+                    openEditNodeModal(d);
+                })
+                .append("title")
+                .text("Edit node");
+            
+            d3.select(this)
+                .append("text")
+                .attr("class", "edit-node-btn")
+                .attr("x", -rectWidth / 2 + 10)
+                .attr("y", -rectHeight / 2 + 13)
+                .attr("text-anchor", "middle")
+                .text("✎")
+                .style("font-size", "12px")
+                .style("fill", "white")
+                .style("font-weight", "bold")
+                .style("cursor", "pointer")
+                .style("pointer-events", "none");
+        });
+
+    nodes.filter(d => d.data.type === "table")
+        .selectAll("foreignObject, circle.add-node-btn, text.add-node-btn, circle.edit-node-btn, text.edit-node-btn").remove();
+        
+    nodes.filter(d => d.data.type === "table")
+        .each(function(d) {
+            
+            // Table starts at y: -40, so position buttons slightly above that
+            const buttonY = -55; 
+            
+            d3.select(this)
+                .append("circle")
+                .attr("class", "add-node-btn")
+                .attr("cx", 140)
+                .attr("cy", buttonY)
+                .attr("r", 10)
+                .style("fill", "#4CAF50")
+                .style("cursor", "pointer")
+                .style("opacity", 0.7)
+                .on("click", function(event) {
+                    event.stopPropagation();
+                    openAddNodeModal(d);
+                })
+                .append("title")
+                .text("Add child node");
+            
+            d3.select(this)
+                .append("text")
+                .attr("class", "add-node-btn")
+                .attr("x", 140)
+                .attr("y", buttonY + 3)
+                .attr("text-anchor", "middle")
+                .text("+")
+                .style("font-size", "14px")
+                .style("fill", "white")
+                .style("font-weight", "bold")
+                .style("cursor", "pointer")
+                .style("pointer-events", "none");
+
+            d3.select(this)
+                .append("circle")
+                .attr("class", "edit-node-btn")
+                .attr("cx", -140)
+                .attr("cy", buttonY)
+                .attr("r", 10)
+                .style("fill", "#2196F3")
+                .style("cursor", "pointer")
+                .style("opacity", 0.7)
+                .on("click", function(event) {
+                    event.stopPropagation();
+                    openEditTableNodeModal(d);
+                })
+                .append("title")
+                .text("Edit table node");
+            
+            d3.select(this)
+                .append("text")
+                .attr("class", "edit-node-btn")
+                .attr("x", -140)
+                .attr("y", buttonY + 3)
+                .attr("text-anchor", "middle")
+                .text("✎")
+                .style("font-size", "12px")
+                .style("fill", "white")
+                .style("font-weight", "bold")
+                .style("cursor", "pointer")
+                .style("pointer-events", "none");
+        })
+        .append("foreignObject")
+        .attr("width", 320)
+        .attr("height", d => d.data.tableData.length * 30 + 40)
+        .attr("x", -160)
+        .attr("y", -40)
+        .append("xhtml:div")
+        .style("width", "100%")
+        .style("height", "100%")
+        .style("box-sizing", "border-box")
+        .style("background", "#fff")
+        .style("padding", "0")
+        .html(d => {
+            const headerRow = `
+    <tr>
+        <th style="border: 1px solid #000; padding: 5px; text-align: center;">Name</th>
+        <th style="border: 1px solid #000; padding: 5px; text-align: center;">Class</th>
+        <th style="border: 1px solid #000; padding: 5px; text-align: center;">K</th>
+        <th style="border: 1px solid #000; padding: 5px; text-align: center;">B</th>
+    </tr>
+`;
+            const rows = d.data.tableData
+                .map(row => `
+        <tr>
+            <td style="border: 1px solid #000; padding: 5px; text-align: left;">${row.name || ''}</td>
+            <td style="border: 1px solid #000; padding: 5px; text-align: left;">${row.class || ''}</td>
+            <td style="border: 1px solid #000; padding: 5px; text-align: center;">${row.k || ''}</td>
+            <td style="border: 1px solid #000; padding: 5px; text-align: center;">${row.b || ''}</td>
+        </tr>
+    `)
+                .join("");
+            return `
+    <table style="border-collapse: collapse; width: 100%; font-size: 12px; background-color: #fff;">
+        ${headerRow}
+        ${rows}
+    </table>`;
+        });
+}
+function adjustLines() {
+    if (!links) return;
+    updateLinks();
+}
+function updateLinks() {
+    if (!links) return;
+
+    links.attr("d", d => generatePath(d));
+    svg.selectAll(".link").lower();
+    drawControlPoints();
+}
+function renderLinks(root) {
+    svg.selectAll(".link").remove();
+
+    links = svg.selectAll(".link")
+        .data(root.links())
+        .enter()
+        .append("path")
+        .attr("class", "link")
+        .attr("d", d => {
+            const linkKey = getLinkKey(d);
+            if (!linkControls.has(linkKey)) {
+                linkControls.set(linkKey, []);
+            }
+            return generatePath(d);
+        })
+        .style("cursor", "pointer")
+        .on("click", function (event, d) {
+            const coords = d3.pointer(event, svg.node());
+            const newControl = { x: coords[0], y: coords[1] };
+            const linkKey = getLinkKey(d);
+            if (!linkControls.has(linkKey)) {
+                linkControls.set(linkKey, []);
+            }
+            linkControls.get(linkKey).push(newControl);
+            drawControlPoints();
+            updateLinks();
+        });
+    
+    // Move links to the bottom layer (behind nodes)
+    svg.selectAll(".link").lower();
+}
+// function generatePath(d) {
+//     const controls = linkControls.get(d) || [];
+
+//     if (controls.length > 0) {
+//         let path = `M${d.source.x},${d.source.y}`;
+//         controls.forEach(cp => path += ` L${cp.x},${cp.y}`);
+//         path += ` L${d.target.x},${d.target.y}`;
+//         return path;
+//     } else {
+//         const midY = (d.source.y + d.target.y) / 2;
+//         return `M${d.source.x},${d.source.y} V${midY} H${d.target.x} V${d.target.y}`;
+//     }
+// }
+function generatePath(d) {
+    const linkKey = getLinkKey(d);
+    const controls = linkControls.get(linkKey) || [];
+
+    if (controls.length > 0) {
+        let path = `M${d.source.x},${d.source.y}`;
+
+        controls.forEach(cp => {
+            path += ` L${cp.x},${cp.y}`;  // Make the line bend through control points
+        });
+
+        path += ` L${d.target.x},${d.target.y}`;
+        return path;
+    } else {
+        // Default orthogonal path
+        const midY = (d.source.y + d.target.y) / 2;
+        return `M${d.source.x},${d.source.y} 
+        V${midY} 
+        H${d.target.x} 
+        V${d.target.y}`;
+    }
+}
+
+function drawControlPoints() {
+    svg.selectAll(".control-point").remove();
+    svg.selectAll(".helper-line").remove();
+
+    if (!links) return;
+
+    links.each(function(d) {
+        const linkKey = getLinkKey(d);
+        const controls = linkControls.get(linkKey) || [];
+        
+        controls.forEach((cp, cpIndex) => {
+            svg.append("line")
+                .attr("class", "helper-line")
+                .attr("x1", cp.x)
+                .attr("y1", cp.y)
+                .attr("x2", cp.x)
+                .attr("y2", d.target.y)
+                .attr("stroke", "gray");
+
+            svg.append("line")
+                .attr("class", "helper-line")
+                .attr("x1", cp.x)
+                .attr("y1", cp.y)
+                .attr("x2", d.target.x)
+                .attr("y2", cp.y)
+                .attr("stroke", "gray");
+
+            svg.append("circle")
+                .attr("cx", cp.x)
+                .attr("cy", cp.y)
+                .attr("r", 5)
+                .attr("class", "control-point")
+                .call(d3.drag()
+                    .on("drag", function (event) {
+                        cp.x = event.x;
+                        cp.y = event.y;
+                        d3.select(this).attr("cx", cp.x).attr("cy", cp.y);
+                        updateLinks();
+                    })
+                );
+        });
+    });
+}
+function saveGraph() {
+    function buildHierarchy(node) {
+        return {
+            nodeid: node.data.nodeid,
+            name: node.data.name,
+            class: node.data.class,
+            type: node.data.type,
+            x: node.x,
+            y: node.y,
+            children: node.children ? node.children.map(buildHierarchy) : undefined,
+            tableData: node.data.type === "table" ? node.data.tableData || [] : undefined
+        };
+    }
+
+    const graphData = buildHierarchy(root);
+    graphData.controlPoints = Array.from(linkControls.entries()).map(([linkKey, controls]) => {
+        const [sourceId, targetId] = linkKey.split('-');
+        return {
+            dotid: `cp-${sourceId}-${targetId}`,
+            nodeSourceId: parseInt(sourceId),
+            nodeTargetId: parseInt(targetId),
+        edgeType: "orthogonal",
+        controlPoints: controls.map(cp => ({ x: cp.x, y: cp.y }))
+        };
+    });
+
+    const blob = new Blob([JSON.stringify(graphData, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "graph_data.json";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+}
+
+function processFile(file) {
+    if (!file) return;
+    
+    if (!file.type.includes('json') && !file.name.endsWith('.json')) {
+        alert('Please drop a JSON file!');
+        return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = function (e) {
+        try {
+        const loadedData = JSON.parse(e.target.result);
+
+            // Store control points data temporarily (before tree initialization)
+            const savedControlPoints = loadedData.controlPoints || [];
+            
+            // Remove controlPoints from tree data (it's metadata, not part of tree structure)
+            const treeDataOnly = { ...loadedData };
+            delete treeDataOnly.controlPoints;
+
+        nodes.clear();
+        linkControls.clear();
+        svg.selectAll("*").remove();
+
+            initializeTree(treeDataOnly);
+            
+            // Restore x and y positions from saved data, or use initial positioning if not available
+            root.descendants().forEach(d => {
+                function restorePositions(node, savedNode) {
+                    if (node.data.nodeid === savedNode.nodeid) {
+                        // Use saved positions if available, otherwise keep calculated positions
+                        if (savedNode.x !== undefined && savedNode.y !== undefined) {
+                            node.x = savedNode.x;
+                            node.y = savedNode.y;
+                        }
+                        // If positions not saved, node.x and node.y keep their calculated values from initializeTree
+                        if (savedNode.children && node.children) {
+                            savedNode.children.forEach((savedChild, idx) => {
+                                if (node.children[idx]) {
+                                    restorePositions(node.children[idx], savedChild);
+                                }
+                            });
+                        }
+                    }
+                }
+                restorePositions(d, loadedData);
+            });
+            
+            svg.selectAll(".node").remove();
+            renderNodes(root);
+            
+            if (savedControlPoints && savedControlPoints.length > 0) {
+                savedControlPoints.forEach(cpData => {
+                    const linkKey = `${cpData.nodeSourceId}-${cpData.nodeTargetId}`;
+                    linkControls.set(linkKey, cpData.controlPoints.map(cp => ({ x: cp.x, y: cp.y })));
+                });
+            }
+            
+            // Update links with restored control points (don't re-render - renderLinks already called by initializeTree)
+            updateLinks();
+            
+            svg.selectAll(".link").lower();
+
+            console.log("Graph Loaded:", loadedData);
+            alert("Graph Loaded Successfully!");
+        } catch (error) {
+            alert("Error loading graph: " + error.message);
+            console.error("Error parsing JSON:", error);
+        }
+    };
+    reader.onerror = function() {
+        alert("Error reading file!");
+    };
+    reader.readAsText(file);
+}
+
+function loadGraph(event) {
+    const file = event.target.files[0];
+    processFile(file);
+}
+
+const dropZone = document.getElementById('dropZone');
+
+dropZone.addEventListener('dragover', function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    dropZone.classList.add('drag-over');
+});
+
+dropZone.addEventListener('dragleave', function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    dropZone.classList.remove('drag-over');
+});
+
+dropZone.addEventListener('drop', function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    dropZone.classList.remove('drag-over');
+    
+    const files = e.dataTransfer.files;
+    if (files.length > 0) {
+        processFile(files[0]);
+    }
+});
+
+
+document.getElementById('fileInput').addEventListener('change', loadGraph);
+
+
+window.addEventListener('dragover', function(e) {
+    e.preventDefault();
+});
+
+window.addEventListener('drop', function(e) {
+    if (!e.target.closest('#dropZone')) {
+        e.preventDefault();
+    }
+});
+
+
+
+
+
+
+// function loadGraph(event) {
+//     const file = event.target.files[0];
+//     if (!file) return;
+
+//     const reader = new FileReader();
+//     reader.onload = function (e) {
+//         const loadedData = JSON.parse(e.target.result);
+
+//         function rebuildHierarchy(node) {
+//             if (!node.children) return node;
+//             node.children = node.children.map(rebuildHierarchy);
+//             return node;
+//         }
+
+//         treeData = rebuildHierarchy(loadedData);
+        
+
+//         loadedData.controlPoints.forEach(cpData => {
+//             const sourceNode = root.descendants().find(n => n.data.nodeid === cpData.nodeSourceId);
+//             const targetNode = root.descendants().find(n => n.data.nodeid === cpData.nodeTargetId);
+//             if (sourceNode && targetNode) {
+//                 const link = { source: sourceNode, target: targetNode };
+//                 linkControls.set(link, cpData.controlPoints.map(cp => ({ x: cp.x, y: cp.y })));
+//             }
+//         });
+//         initializeTree(treeData);
+//         alert("Graph Loaded Successfully!");
+//     };
+//     reader.readAsText(file);
+// }
+const initialData = {
+    "nodeid": 1,
+    "name": "CEO",
+    "class": "Executive Level",
+    "type": "rectangle",
+    "children": [
+        {
+            "nodeid": 2,
+            "name": "Chief Financial Officer",
+            "class": "Executive Level",
+            "type": "rectangle",
+            "children": [
+                {
+                    "nodeid": 3,
+                    "name": "Finance Manager",
+                    "class": "Management Level",
+                    "type": "rectangle"
+                },
+                {
+                    "nodeid": 4,
+                    "name": "Accounting Manager",
+                    "class": "Management Level",
+                    "type": "rectangle"
+                },
+                {
+                    "nodeid": 5,
+                    "name": "Budget Manager",
+                    "class": "Management Level",
+                    "type": "rectangle"
+                }
+            ]
+        },
+        {
+            "nodeid": 6,
+            "name": "Chief Operating Officer",
+            "class": "Executive Level",
+            "type": "rectangle",
+            "children": [
+                {
+                    "nodeid": 7,
+                    "name": "Operations Manager",
+                    "class": "Management Level",
+                    "type": "rectangle"
+                },
+                {
+                    "nodeid": 8,
+                    "name": "Logistics Manager",
+                    "class": "Management Level",
+                    "type": "rectangle"
+                },
+                {
+                    "nodeid": 9,
+                    "name": "Quality Manager",
+                    "class": "Management Level",
+                    "type": "rectangle"
+                }
+            ]
+        },
+        {
+            "nodeid": 10,
+            "name": "Human Resources Director",
+            "class": "Executive Level",
+            "type": "rectangle"
+        },
+        {
+            "nodeid": 11,
+            "name": "Chief Technology Officer",
+            "class": "Executive Level",
+            "type": "rectangle"
+        },
+        {
+            "nodeid": 12,
+            "name": "Chief Marketing Officer",
+            "class": "Executive Level",
+            "type": "rectangle",
+            "children": [
+                {
+                    "nodeid": 13,
+                    "name": "Marketing Department",
+                    "class": "Department",
+                    "type": "table",
+                    "tableData": [
+                        {
+                            "name": "Heru",
+                            "class": "Jabatan 1",
+                            "k": "K1",
+                            "b": "B1"
+                        },
+                        {
+                            "name": "Yadi",
+                            "class": "Jabatan 2",
+                            "k": "K1",
+                            "b": "B1"
+                        },
+                        {
+                            "name": "Entis",
+                            "class": "Jabatan 3",
+                            "k": "K1",
+                            "b": "B1"
+                        },
+                        {
+                            "name": "Asep",
+                            "class": "Jabatan 4",
+                            "k": "K1",
+                            "b": "B1"
+                        },
+                        {
+                            "name": "Jajang",
+                            "class": "Jabatan 5",
+                            "k": "K2",
+                            "b": "B2"
+                        },
+                        {
+                            "name": "Cahya",
+                            "class": "Jabatan 6 ",
+                            "k": "K3",
+                            "b": "B3"
+                        }
+                    ]
+                },
+                {
+                    "nodeid": 14,
+                    "name": "Sales Manager",
+                    "class": "Management Level",
+                    "type": "rectangle"
+                }
+            ]
+        }
+    ]
+};
+
+initializeTree(initialData);
+
+function openAddNodeModal(nodeData) {
+    selectedNodeForAdding = nodeData;
+    document.getElementById('addNodeModal').style.display = 'block';
+    document.getElementById('addNodeForm').reset();
+    document.getElementById('regularNodeFields').style.display = 'block';
+    document.getElementById('tableDataSection').style.display = 'none';
+    document.getElementById('tableRows').innerHTML = '';
+    document.querySelector('input[name="nodeType"][value="rectangle"]').checked = true;
+    document.getElementById('nodeName').setAttribute('required', 'required');
+    document.getElementById('nodeClass').setAttribute('required', 'required');
+}
+
+function closeAddNodeModal() {
+    document.getElementById('addNodeModal').style.display = 'none';
+    selectedNodeForAdding = null;
+    document.getElementById('addNodeForm').reset();
+    document.getElementById('regularNodeFields').style.display = 'block';
+    document.getElementById('tableDataSection').style.display = 'none';
+    document.getElementById('tableRows').innerHTML = '';
+}
+
+function toggleNodeTypeInputs() {
+    const nodeType = document.querySelector('input[name="nodeType"]:checked').value;
+    const regularFields = document.getElementById('regularNodeFields');
+    const tableSection = document.getElementById('tableDataSection');
+    const nameInput = document.getElementById('nodeName');
+    const classInput = document.getElementById('nodeClass');
+    
+    if (nodeType === 'table') {
+        regularFields.style.display = 'none';
+        tableSection.style.display = 'block';
+        nameInput.removeAttribute('required');
+        classInput.removeAttribute('required');
+        if (document.getElementById('tableRows').children.length === 0) {
+            addTableRow();
+        }
+    } else {
+        regularFields.style.display = 'block';
+        tableSection.style.display = 'none';
+        nameInput.setAttribute('required', 'required');
+        classInput.setAttribute('required', 'required');
+    }
+}
+
+function addTableRow() {
+    const tableRows = document.getElementById('tableRows');
+    const rowIndex = tableRows.children.length;
+    const rowDiv = document.createElement('div');
+    rowDiv.className = 'table-row';
+    rowDiv.setAttribute('data-row-index', rowIndex);
+    rowDiv.innerHTML = `
+        <div class="table-row-header">
+            <strong>Row ${rowIndex + 1}</strong>
+            <button type="button" class="btn-remove-row" onclick="removeTableRow(this)">Remove</button>
+        </div>
+        <div class="table-row-fields">
+            <input type="text" placeholder="Name" class="table-input-name" required>
+            <input type="text" placeholder="Class" class="table-input-class" required>
+            <input type="text" placeholder="K" class="table-input-k" required>
+            <input type="text" placeholder="B" class="table-input-b" required>
+        </div>
+    `;
+    tableRows.appendChild(rowDiv);
+}
+
+function removeTableRow(button) {
+    button.closest('.table-row').remove();
+    const rows = document.querySelectorAll('.table-row');
+    rows.forEach((row, index) => {
+        row.querySelector('strong').textContent = `Row ${index + 1}`;
+    });
+}
+
+function handleAddNode(event) {
+    event.preventDefault();
+    
+    if (!selectedNodeForAdding) {
+        alert('No node selected');
+        return;
+    }
+
+    const formData = new FormData(event.target);
+    const nodeType = formData.get('nodeType');
+    
+    if (nodeType === 'rectangle') {
+        const name = formData.get('name');
+        const classValue = formData.get('class');
+        if (!name || !classValue || name.trim() === '' || classValue.trim() === '') {
+            alert('Please fill in Name and Class for regular nodes');
+            return;
+        }
+    } else if (nodeType === 'table') {
+        const tableRows = document.querySelectorAll('#tableRows .table-row');
+        if (tableRows.length === 0) {
+            alert('Please add at least one table row');
+            return;
+        }
+        let hasData = false;
+        tableRows.forEach(row => {
+            const nameInput = row.querySelector('.table-input-name');
+            if (nameInput && nameInput.value.trim()) {
+                hasData = true;
+            }
+        });
+        if (!hasData) {
+            alert('Please fill in at least one table row');
+            return;
+        }
+    }
+
+    let maxNodeId = 0;
+    function findMaxNodeId(node) {
+        if (node.nodeid > maxNodeId) maxNodeId = node.nodeid;
+        if (node.children) {
+            node.children.forEach(findMaxNodeId);
+        }
+    }
+    findMaxNodeId(treeData);
+    const newNodeId = maxNodeId + 1;
+
+    const newNode = {
+        nodeid: newNodeId,
+        type: nodeType
+    };
+
+    if (nodeType === 'table') {
+        const tableData = [];
+        const rowInputs = document.querySelectorAll('#tableRows .table-row');
+        rowInputs.forEach((row) => {
+            const nameInput = row.querySelector('.table-input-name');
+            const classInput = row.querySelector('.table-input-class');
+            const kInput = row.querySelector('.table-input-k');
+            const bInput = row.querySelector('.table-input-b');
+            
+            if (nameInput && nameInput.value.trim()) {
+                tableData.push({
+                    name: nameInput.value.trim(),
+                    class: classInput ? classInput.value.trim() : '',
+                    k: kInput ? kInput.value.trim() : '',
+                    b: bInput ? bInput.value.trim() : ''
+                });
+            }
+        });
+        newNode.tableData = tableData;
+    } else {
+        const name = formData.get('name');
+        const classValue = formData.get('class');
+        newNode.name = name;
+        newNode.class = classValue;
+    }
+
+    function addChildToNode(node, targetNodeId) {
+        if (node.nodeid === targetNodeId) {
+            if (!node.children) {
+                node.children = [];
+            }
+            node.children.push(newNode);
+            return true;
+        }
+        if (node.children) {
+            for (let child of node.children) {
+                if (addChildToNode(child, targetNodeId)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    if (addChildToNode(treeData, selectedNodeForAdding.data.nodeid)) {
+        // Clear x/y from all children of the parent to recalculate their positions
+        function clearPositionsForNodeAndChildren(node, targetNodeId) {
+            if (node.nodeid === targetNodeId) {
+                // Clear x/y from all children of this node so they get recalculated
+                if (node.children) {
+                    node.children.forEach(child => {
+                        delete child.x;
+                        delete child.y;
+                    });
+                }
+                return true;
+            }
+            if (node.children) {
+                for (let child of node.children) {
+                    if (clearPositionsForNodeAndChildren(child, targetNodeId)) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+        
+        clearPositionsForNodeAndChildren(treeData, selectedNodeForAdding.data.nodeid);
+        
+        svg.selectAll("*").remove();
+        linkControls.clear();
+        
+        initializeTree(treeData);
+        closeAddNodeModal();
+    } else {
+        alert('Failed to add node');
+    }
+}
+
+function openEditNodeModal(nodeData) {
+    selectedNodeForEditing = nodeData;
+    document.getElementById('editNodeModal').style.display = 'block';
+    
+    document.getElementById('editNodeName').value = nodeData.data.name || '';
+    document.getElementById('editNodeClass').value = nodeData.data.class || '';
+}
+
+function closeEditNodeModal() {
+    document.getElementById('editNodeModal').style.display = 'none';
+    selectedNodeForEditing = null;
+    document.getElementById('editNodeForm').reset();
+}
+
+function handleEditNode(event) {
+    event.preventDefault();
+    
+    if (!selectedNodeForEditing) {
+        alert('No node selected');
+        return;
+    }
+
+    const formData = new FormData(event.target);
+    const name = formData.get('name');
+    const classValue = formData.get('class');
+
+    function updateNodeData(node, targetNodeId) {
+        if (node.nodeid === targetNodeId) {
+            node.name = name;
+            node.class = classValue;
+            return true;
+        }
+        if (node.children) {
+            for (let child of node.children) {
+                if (updateNodeData(child, targetNodeId)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    if (updateNodeData(treeData, selectedNodeForEditing.data.nodeid)) {
+        svg.selectAll("*").remove();
+        linkControls.clear();
+        initializeTree(treeData);
+        closeEditNodeModal();
+    } else {
+        alert('Failed to update node');
+    }
+}
+
+function openEditTableNodeModal(nodeData) {
+    selectedTableNodeForEditing = nodeData;
+    document.getElementById('editTableNodeModal').style.display = 'block';
+    document.getElementById('editTableNodeForm').reset();
+    
+    document.getElementById('editTableNodeRows').innerHTML = '';
+    
+    // Load existing table data if any
+    if (nodeData.data.tableData && nodeData.data.tableData.length > 0) {
+        nodeData.data.tableData.forEach((row) => {
+            addEditTableNodeRow(row.name || '', row.class || '', row.k || '', row.b || '');
+        });
+    } else {
+        addEditTableNodeRow();
+    }
+}
+
+function closeEditTableNodeModal() {
+    document.getElementById('editTableNodeModal').style.display = 'none';
+    selectedTableNodeForEditing = null;
+    document.getElementById('editTableNodeForm').reset();
+    document.getElementById('editTableNodeRows').innerHTML = '';
+}
+
+function addEditTableNodeRow(name = '', classValue = '', k = '', b = '') {
+    const tableRows = document.getElementById('editTableNodeRows');
+    const rowIndex = tableRows.children.length;
+    const rowDiv = document.createElement('div');
+    rowDiv.className = 'table-row';
+    rowDiv.setAttribute('data-row-index', rowIndex);
+    rowDiv.innerHTML = `
+        <div class="table-row-header">
+            <strong>Row ${rowIndex + 1}</strong>
+            <button type="button" class="btn-remove-row" onclick="removeEditTableNodeRow(this)">Remove</button>
+        </div>
+        <div class="table-row-fields">
+            <input type="text" placeholder="Name" class="edit-table-node-input-name" value="${name}" required>
+            <input type="text" placeholder="Class" class="edit-table-node-input-class" value="${classValue}" required>
+            <input type="text" placeholder="K" class="edit-table-node-input-k" value="${k}" required>
+            <input type="text" placeholder="B" class="edit-table-node-input-b" value="${b}" required>
+        </div>
+    `;
+    tableRows.appendChild(rowDiv);
+}
+
+function removeEditTableNodeRow(button) {
+    button.closest('.table-row').remove();
+    const rows = document.querySelectorAll('#editTableNodeRows .table-row');
+    rows.forEach((row, index) => {
+        row.querySelector('strong').textContent = `Row ${index + 1}`;
+    });
+}
+
+function handleEditTableNode(event) {
+    event.preventDefault();
+    
+    if (!selectedTableNodeForEditing) {
+        alert('No node selected');
+        return;
+    }
+
+    const tableData = [];
+    const rowInputs = document.querySelectorAll('#editTableNodeRows .table-row');
+    rowInputs.forEach((row) => {
+        const nameInput = row.querySelector('.edit-table-node-input-name');
+        const classInput = row.querySelector('.edit-table-node-input-class');
+        const kInput = row.querySelector('.edit-table-node-input-k');
+        const bInput = row.querySelector('.edit-table-node-input-b');
+        
+        if (nameInput && nameInput.value.trim()) {
+            tableData.push({
+                name: nameInput.value.trim(),
+                class: classInput ? classInput.value.trim() : '',
+                k: kInput ? kInput.value.trim() : '',
+                b: bInput ? bInput.value.trim() : ''
+            });
+        }
+    });
+
+    function updateTableNodeData(node, targetNodeId) {
+        if (node.nodeid === targetNodeId) {
+            node.tableData = tableData;
+            return true;
+        }
+        if (node.children) {
+            for (let child of node.children) {
+                if (updateTableNodeData(child, targetNodeId)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    if (updateTableNodeData(treeData, selectedTableNodeForEditing.data.nodeid)) {
+        svg.selectAll("*").remove();
+        linkControls.clear();
+        initializeTree(treeData);
+        closeEditTableNodeModal();
+    } else {
+        alert('Failed to update node');
+    }
+}
+
+window.onclick = function(event) {
+    const addModal = document.getElementById('addNodeModal');
+    const editModal = document.getElementById('editNodeModal');
+    const editTableModal = document.getElementById('editTableNodeModal');
+    if (event.target === addModal) {
+        closeAddNodeModal();
+    }
+    if (event.target === editModal) {
+        closeEditNodeModal();
+    }
+    if (event.target === editTableModal) {
+        closeEditTableNodeModal();
+    }
+};
+
+
+

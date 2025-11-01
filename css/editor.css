@@ -1,0 +1,232 @@
+body {
+    font-family: Arial, sans-serif;
+}
+
+#graph-container {
+    width: 100%;
+    height: 80vh;
+    overflow: auto;
+    border: 1px solid #ffffff;
+    background-color: #ffffff;
+    position: relative;
+}
+
+#tree-chart {
+    min-width: 100%;
+}
+
+.helper-line {
+    stroke: gray;
+    stroke-dasharray: 5, 5;
+    stroke-width: 1px;
+}
+
+svg {
+    overflow: visible;
+}
+
+.node {
+    cursor: pointer;
+}
+
+.node rect {
+    fill: #fff;
+    stroke: steelblue;
+    stroke-width: 2px;
+}
+
+.node line {
+    stroke: #ccc;
+    stroke-width: 1px;
+}
+
+.node text {
+    font-size: 12px;
+    fill: #333;
+}
+
+.link {
+    fill: none;
+    stroke: #090909;
+    stroke-width: 2px;
+    cursor: pointer;
+}
+
+.control-point {
+    fill: red;
+    cursor: pointer;
+}
+
+.drop-zone {
+    display: inline-block;
+    padding: 10px 20px;
+    border: 2px dashed #ccc;
+    border-radius: 5px;
+    background-color: #f9f9f9;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    min-width: 150px;
+    text-align: center;
+}
+
+.drop-zone:hover {
+    border-color: #4CAF50;
+    background-color: #f0f8f0;
+}
+
+.drop-zone.drag-over {
+    border-color: #4CAF50;
+    background-color: #e8f5e9;
+    transform: scale(1.05);
+}
+
+.add-node-btn {
+    cursor: pointer;
+    font-size: 10px;
+    fill: #4CAF50;
+    opacity: 0.7;
+    transition: opacity 0.2s;
+}
+
+.add-node-btn:hover {
+    opacity: 1;
+}
+
+.node:hover .add-node-btn {
+    opacity: 1;
+}
+
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.5);
+}
+
+.modal-content {
+    background-color: #fefefe;
+    margin: 10% auto;
+    padding: 20px;
+    border: 1px solid #888;
+    width: 90%;
+    max-width: 600px;
+    border-radius: 5px;
+    max-height: 80vh;
+    overflow-y: auto;
+}
+
+.close {
+    color: #aaa;
+    float: right;
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+.close:hover,
+.close:focus {
+    color: black;
+}
+
+.form-group {
+    margin-bottom: 15px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: bold;
+}
+
+.form-group input,
+.form-group select,
+.form-group textarea {
+    width: 100%;
+    padding: 8px;
+    box-sizing: border-box;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+}
+
+.form-group textarea {
+    resize: vertical;
+    min-height: 60px;
+}
+
+.node-type-selector {
+    margin-bottom: 20px;
+}
+
+.node-type-selector label {
+    display: inline-block;
+    margin-right: 15px;
+    cursor: pointer;
+}
+
+.table-rows {
+    margin-top: 15px;
+}
+
+.table-row {
+    border: 1px solid #ddd;
+    padding: 10px;
+    margin-bottom: 10px;
+    border-radius: 4px;
+    background-color: #f9f9f9;
+}
+
+.table-row-header {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 10px;
+}
+
+.table-row-fields {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+}
+
+.table-row-fields input {
+    width: 100%;
+    padding: 5px;
+    box-sizing: border-box;
+}
+
+.btn-remove-row {
+    background-color: #f44336;
+    color: white;
+    border: none;
+    padding: 5px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.btn-add-row {
+    background-color: #2196F3;
+    color: white;
+    border: none;
+    padding: 8px 15px;
+    border-radius: 4px;
+    cursor: pointer;
+    margin-top: 10px;
+}
+
+.btn-submit {
+    background-color: #4CAF50;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 16px;
+    margin-top: 20px;
+}
+
+.btn-submit:hover {
+    background-color: #45a049;
+}

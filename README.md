@@ -2,8 +2,6 @@
 
 A powerful, interactive tree chart visualization built with D3.js for displaying organizational hierarchies. Features draggable nodes, editable links with control points (elbows), and export to PDF functionality.
 
-
-
 ## Features
 
 ### Editor Mode (`editor.html`)
